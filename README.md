@@ -6,7 +6,7 @@ The Prologix controller can be purchased from [Sparkfun](https://www.sparkfun.co
 
 ## Installation
 
-1. Install the [FTDI VCP Driver](http://www.ftdichip.com/Drivers/VCP.htm).
+1. Install the [FTDI VCP Driver](http://www.ftdichip.com/Drivers/VCP.htm) (OSX only, not needed on Linux).
 1. Create a Python environment.
     ```
     $ python3 -m venv venv
@@ -17,8 +17,8 @@ The Prologix controller can be purchased from [Sparkfun](https://www.sparkfun.co
 
 ## Tested with
 
-* macOS 10.13.3
-* Python 3.6.4
+* macOS 10.13.3 and Ubuntu 16.04
+* Python 3.6.4 and 3.6.6
 * FTDI USB Serial Driver 2.4.2 (2017-05-02)
 * Prologix GPIB-USB Controller version 6.107
 
