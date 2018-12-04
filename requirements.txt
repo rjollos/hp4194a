@@ -1,3 +1,5 @@
+PyVISA-py
+PyVISA
+PySerial
 matplotlib
-pyserial
 scipy

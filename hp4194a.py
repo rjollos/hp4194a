@@ -1,22 +1,28 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
+"""Acquisition script for HP4194A Impedance Analyzer"""
 
 import argparse
 import configparser
 import datetime
 import os
+import subprocess
 import sys
-import time
 
+import numpy
 import pylab
+import pyvisa
 import scipy.io as scio
-import serial
 import matplotlib.pyplot as pyplot
 
-debug = False
-fileext = '.mat'
+DEBUG = False
+FILE_EXT = '.mat'
 
 
 def main(filename):
+    """Acquire and plot/save data."""
+    r = subprocess.run('git describe --tags --always', shell=True,
+                       stdout=subprocess.PIPE)
+    program_version = r.stdout.strip().decode()
 
     def to_tuple(s):
         return [int(float(v)) for v in s.split(',')]
@@ -24,7 +30,7 @@ def main(filename):
     parser = configparser.ConfigParser()
     parser.read('hp4194a.ini')
     setup_section = parser['setup']
-    port = setup_section.get('port')
+    resource_name = setup_section.get('resource_name')
     gpib_address = int(setup_section.get('gpib_address'))
     sweep_section = parser['sweep']
     start_frequency = int(float(sweep_section.get('start_frequency')))
@@ -35,108 +41,88 @@ def main(filename):
     display_range_b = to_tuple(sweep_section.get('display_range_b'))
     bias_voltage = int(sweep_section.get('bias_voltage'))
 
-    with serial.Serial(port, timeout=0.5) as sp:
-        def write(cmd):
-            sp.write(bytes(cmd + '\r\n', 'utf-8'))
+    rm = pyvisa.ResourceManager('@py')
+    inst = rm.open_resource(resource_name)
+    inst.timeout = 10000
 
-        def read(nb=None):
-            if nb:
-                buf = sp.read(nb).strip()
-            else:
-                buf = sp.readline().strip()
-            return buf.decode('utf-8')
+    inst.write('++mode 1')  # Configure as controller
+    inst.write('++auto 1')  # Configure read-after-write
+    inst.write('++addr %d' % gpib_address)
+    inst.write('++clr')
+    print(inst.query('++ver'))
 
-        def read_data():
-            buf = sp.readline().strip()
-            return [float(v.strip()) for v in buf.split(b',') if v]
+    inst.write('IMP2')  # R-X
+    inst.write('ITM2')  # Integration time medium
+    inst.write(f'START={start_frequency}')
+    inst.write(f'STOP={stop_frequency}')
+    inst.write(f'AMIN={display_range_a[0]}')
+    inst.write(f'AMAX={display_range_a[1]}')
+    inst.write(f'BMIN={display_range_b[0]}')
+    inst.write(f'BMAX={display_range_b[1]}')
+    inst.write(f'NOP={number_of_points}')
+    inst.write(f'NOA={number_of_averages}')
+    inst.write('SHT1')  # Short compensation on
+    inst.write('OPN1')  # Open compenstaion on
+    inst.write(f'BIAS={bias_voltage}')
 
-        def serial_poll():
-            write('++spoll')
-            time.sleep(0.25)
-            return sp.readline().strip()
+    inst.write('RQS2')
+    inst.write('SWM2')  # Single sweep
+    inst.write('SWTRG')  # Trigger acquisition
+    inst.write('CMT"Acquiring sweep"')
 
-        write('++mode 1')  # Configure as controller
-        write('++auto 1')  # Configure read-after-write
-        write('++addr %d' % gpib_address)
-        write('++clr')
-        sp.reset_input_buffer()
-        read()  # Clears the buffer
-        write('++ver')
-        print(read())
+    sweep_finished = False
+    print("Acquiring sweep")
+    while not sweep_finished:
+        polled = inst.query('++spoll')
+        if polled:
+            try:
+                status_byte = int(polled)
+            except (ValueError, IndexError):
+                print("Serial poll returned unexpected value: {}"
+                      .format(polled))
+                break
+            if DEBUG:
+                print("{:08b}".format(status_byte))
+            sweep_finished = not status_byte & 0x01
+    print("Acquisition complete")
+    inst.write('DCOFF')  # Bias off
 
-        write('IMP2')  # R-X
-        write('ITM2')  # Integration time medium
-        write(f'START={start_frequency}')
-        write(f'STOP={stop_frequency}')
-        write(f'AMIN={display_range_a[0]}')
-        write(f'AMAX={display_range_a[1]}')
-        write(f'BMIN={display_range_b[0]}')
-        write(f'BMAX={display_range_b[1]}')
-        write(f'NOP={number_of_points}')
-        write(f'NOA={number_of_averages}')
-        write('SHT1')  # Short compensation on
-        write('OPN1')  # Open compenstaion on
-        write(f'BIAS={bias_voltage}')
+    a = inst.query_ascii_values('A?', container=numpy.array)
+    b = inst.query_ascii_values('B?', container=numpy.array)
 
-        write('RQS2')
-        write('SWM2')  # Single sweep
-        write('SWTRG')  # Trigger acquisition
-        write('CMT"Acquiring sweep"')
+    save = True
+    if len(a) != number_of_points:
+        print("Number of points transfered from Channel A: %d")
+        save = False
+    if len(b) != number_of_points:
+        print("Number of points transfered from Channel B: %d")
+        save = False
+    if save:
+        scio.savemat(filename, {
+            'time': datetime.datetime.now().isoformat(),
+            'acqProgramVersion': program_version,
+            'biasVoltage': bias_voltage,
+            'numberOfAverages': number_of_averages,
+            'Frequency': (start_frequency, stop_frequency),
+            'ChannelA': a,
+            'ChannelB': b,
+        })
+        # Strip .mat when printing
+        inst.write(f'CMT"Saved as {os.path.basename(filename[:-4])}"')
+        print(f"Data saved to {filename}")
 
-        sweep_finished = False
-        print("Acquiring sweep")
-        sp.reset_input_buffer()
-        read()  # Clears the buffer
-        while not sweep_finished:
-            polled = serial_poll()
-            if polled:
-                try:
-                    status_byte = int(polled)
-                except (ValueError, IndexError):
-                    print("Serial poll returned unexpected value: {}"
-                          .format(polled))
-                    break
-                if debug:
-                    print("{:08b}".format(status_byte))
-                sweep_finished = not(status_byte & 0x01)
-        print("Acquisition complete")
-        write('DCOFF')  # Bias off
+        t = pylab.linspace(start_frequency, stop_frequency,
+                           number_of_points)
+        plotyy(t, a, b, display_range_a, display_range_b)
+    else:
+        print("No data saved")
 
-        if sweep_finished:
-            sp.reset_input_buffer()
-            write('A?')
-            a = read_data()
-            write('B?')
-            b = read_data()
-
-            save = True
-            if len(a) != number_of_points:
-                print("Number of points transfered from Channel A: %d")
-                save = False
-            if len(b) != number_of_points:
-                print("Number of points transfered from Channel B: %d")
-                save = False
-            if save:
-                scio.savemat(filename, {
-                    'time': datetime.datetime.now().isoformat(),
-                    'biasVoltage': bias_voltage,
-                    'numberOfAverages': number_of_averages,
-                    'Frequency': (start_frequency, stop_frequency),
-                    'ChannelA': a,
-                    'ChannelB': b,
-                })
-                # Strip .mat when printing
-                write(f'CMT"Saved as {os.path.basename(filename[:-4])}"')
-                print(f"Data saved to {filename}")
-
-                t = pylab.linspace(start_frequency, stop_frequency,
-                                   number_of_points)
-                plotyy(t, a, b, display_range_a, display_range_b)
-            else:
-                print("No data saved")
+    inst.close()
+    rm.close()
 
 
 def plotyy(t, y1, y2, y1lim, y2lim):
+    """Plot data with two y-axes."""
     t /= 1e3  # Hz -> kHz
     fig, ax1 = pyplot.subplots()
     color = 'tab:orange'
@@ -170,7 +156,8 @@ def default_filename():
     return now.replace('-', '').replace(':', '').split('.')[0]
 
 
-if __name__ == '__main__':
+def parse_args():
+    """Parse command line arguments."""
     default = default_filename()
     parser = argparse.ArgumentParser(description='HP4194A acquisition script')
     parser.add_argument('filename', nargs='?')
@@ -180,11 +167,15 @@ if __name__ == '__main__':
     else:
         filename = input(f"Enter a filepath or press [ENTER] to accept the "
                          f"default ({default}.mat):") or default
-    if not filename.endswith(fileext):
-        filename += fileext
+    if not filename.endswith(FILE_EXT):
+        filename += FILE_EXT
     if os.path.exists(filename):
         resp = input(f"File {filename} exists. Are you sure you want "
                      f"to overwrite it (y/n)?")
         if resp.lower() != 'y':
             sys.exit(0)
-    main(filename)
+    return filename
+
+
+if __name__ == '__main__':
+    main(parse_args())

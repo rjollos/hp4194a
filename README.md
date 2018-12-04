@@ -1,6 +1,6 @@
 # Description
 
-This is a Python script for acquiring from the HP4194A impedance analyzer using the [Prologix GPIB-USB Controller](http://prologix.biz/gpib-usb-controller.html). The [PySerial](http://pyserial.readthedocs.io/en/latest/pyserial_api.html) library is used to communicate over the USB link.
+This is a Python script for acquiring from the HP4194A impedance analyzer using the [Prologix GPIB-USB Controller](http://prologix.biz/gpib-usb-controller.html). The [PyVISA](https://pyvisa.readthedocs.io/en/master/) library is used to communicate over the USB link.
 
 The Prologix controller can be purchased from [Sparkfun](https://www.sparkfun.com/products/549).
 
@@ -18,7 +18,7 @@ The Prologix controller can be purchased from [Sparkfun](https://www.sparkfun.co
 ## Tested with
 
 * macOS 10.13.3 and Ubuntu 16.04
-* Python 3.6.4 and 3.6.6
+* Python 3.6.7
 * FTDI USB Serial Driver 2.4.2 (2017-05-02)
 * Prologix GPIB-USB Controller version 6.107
 
@@ -53,7 +53,6 @@ The solution described in [this](https://stackoverflow.com/a/21789908/121694) St
 ## TODO
 
 * Add `reset` command: `./hp4194a --reset`
-* Read and poll operations sometimes return incorrect data, which has led to insertion of `read` operations to "clear" the buffer.
 * Improve error handling. For example, when LOCAL is pressed during acquisiiton.
 
 ## References
